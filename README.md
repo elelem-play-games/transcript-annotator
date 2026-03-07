@@ -46,6 +46,3 @@ flowchart LR
   U --> F[Append token to wrong_text\nfor the chosen canonical entity]
   F --> S
 ```
-  L2 -->|ask user| U[User correction]
-  U --> F[Append token to wrong_text\nfor the chosen canonical entity]
-  F --> S
