@@ -1,4 +1,4 @@
-# Audio RAG Annotator
+# Transcript Annotator With Audio RAG
 
 ## Goal 
 Improve enterprise meeting transcripts (e.g., Teams) for domain-specific entities (jargon, project names, people, locations) without tuning or redeploying the transcription model.
