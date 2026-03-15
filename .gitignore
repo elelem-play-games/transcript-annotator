@@ -1,0 +1,35 @@
+# ── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── Virtual environments ─────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── Artifacts (built by the setup pipeline) ──────────────────────────────────
+artifacts/
+
+# ── Secrets ──────────────────────────────────────────────────────────────────
+.env
+.env.*
+*.key
+
+# ── IDE / OS ─────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ── Test / debug output ───────────────────────────────────────────────────────
+correction_result*.json
+*.wav
+*.m4a
