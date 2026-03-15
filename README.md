@@ -60,7 +60,7 @@ This project experiments with a different approach: **leave the ASR model alone 
                               ┌──────────────────────┐
                               │  add_ipa.py          │
                               │  espeak-ng →         │
-                              │  IPA per entity      │
+                              │  embed per entity    │
                               └──────────┬───────────┘
                                          │
                                          ▼
@@ -97,9 +97,8 @@ This project experiments with a different approach: **leave the ASR model alone 
   │   Matcher    │  │  Validator   │  │   Matcher    │
   │              │  │              │  │              │
   │ fuzzywuzzy   │  │ Concept →    │  │ espeak-ng →  │
-  │ string sim   │  │ ChromaDB     │  │ Levenshtein  │
-  │ vs entity    │  │ query →      │  │ on phonetic  │
-  │ store        │  │ chunk lookup │  │ strings      │
+  │ string sim   │  │ ChromaDB     │  │ distance on  │
+  │ store        │  │ chunk lookup │  │ phonetic     │
   └──────┬───────┘  └──────┬───────┘  └──────┬───────┘
          │                 │                 │
          └─────────────────┼─────────────────┘
