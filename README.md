@@ -1,48 +1,201 @@
-# Transcript Annotator With Audio RAG
+# Transcript Annotator
 
-## Goal 
-Improve enterprise meeting transcripts (e.g., Teams) for domain-specific entities (jargon, project names, people, locations) without tuning or redeploying the transcription model.
+## The Problem
 
-## Why this exists
-Corporate transcription services are generally strong at common vocabulary, but frequently miss:
+Collaboration platforms like Microsoft Teams and Zoom ship with built-in transcription that works well for everyday English — but falls apart the moment a meeting turns technical. Internal project codenames, product acronyms, tool names, and people's names are routinely mangled.
 
-- internal project codenames
-- product acronyms
-- uncommon proper nouns (people, sites, tools)
-- org-specific jargon
+The deeper issue is that there is **no practical way to fix this**. Vendors don't expose fine-tuning hooks for their ASR models, and standing up a custom speech pipeline is expensive and operationally heavy.
 
-Most vendors don’t expose a practical way to fine-tune the underlying ASR model—standing up a custom ASR pipeline is expensive and operationally heavy.
+This project experiments with a different approach: **leave the ASR model alone and fix the transcript afterwards**. This is done by mining your own documents for domain-specific entities and combining three independent correction signals — fuzzy string matching, retrieval-augmented context, and phonetic similarity.
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    ONE-TIME SETUP PIPELINE                  │
+│                  (run pipeline/ scripts once)               │
+└─────────────────────────────────────────────────────────────┘
+                             │
+          ┌──────────────────┼──────────────────┐
+          ▼                  ▼                  ▼
+  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐
+  │ data/         │  │ data/         │  │ data/         │
+  │ documents/    │  │ documents/    │  │ documents/    │
+  │ doc_1.md      │  │ doc_2.md      │  │ ...           │
+  └───────┬───────┘  └───────┬───────┘  └───────┬───────┘
+          └──────────────────┼──────────────────┘
+                             │
+                             ▼
+                  ┌─────────────────────┐
+                  │  chunk_documents.py │  Parse markdown → sections
+                  │  LLM: topic,        │  LLM enriches each section
+                  │  summary, entities  │  with metadata
+                  └──────────┬──────────┘
+                             │
+                             ▼
+                  ┌─────────────────────┐
+                  │  artifacts/         │
+                  │  chunks.json        │
+                  └──────────┬──────────┘
+                             │
+               ┌─────────────┴─────────────┐
+               ▼                           ▼
+  ┌────────────────────┐       ┌────────────────────┐
+  │  embed_chunks.py   │       │ build_entity_      │
+  │  Split → 500-token │       │ store.py           │
+  │  sub-chunks        │       │ Collect all unique │
+  │  OpenAI embeddings │       │ entities + contexts│
+  └─────────┬──────────┘       └──────────┬─────────┘
+            │                             │
+            ▼                             ▼
+  ┌──────────────────┐        ┌──────────────────────┐
+  │ artifacts/       │        │ artifacts/           │
+  │ chroma_db/       │        │ entity_store.json    │
+  │ (vector store)   │        │                      │
+  └──────────────────┘        └──────────┬───────────┘
+                                         │
+                                         ▼
+                              ┌──────────────────────┐
+                              │  add_ipa.py          │
+                              │  espeak-ng →         │
+                              │  IPA per entity      │
+                              └──────────┬───────────┘
+                                         │
+                                         ▼
+                              ┌──────────────────────┐
+                              │ artifacts/            │
+                              │ entity_store.json     │
+                              │ (+ ipa fields)        │
+                              └──────────────────────┘
 
 
-## The approach
-Instead of tuning ASR, we build a RAG-based audio annotator:
+┌─────────────────────────────────────────────────────────────┐
+│                    CORRECTION RUNTIME                       │
+│                     (app/app.py)                            │
+└─────────────────────────────────────────────────────────────┘
+                             │
+                             ▼
+                  ┌─────────────────────┐
+                  │   Raw Transcript    │
+                  │  (pasted by user)   │
+                  └──────────┬──────────┘
+                             │
+                             ▼
+                  ┌─────────────────────┐
+                  │  EntityExtractor    │  LLM identifies candidate
+                  │  (LLM)              │  tokens to verify
+                  └──────────┬──────────┘
+                             │
+              ┌──────────────┼──────────────┐
+              │              │              │
+              ▼              ▼              ▼
+  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+  │   Signal 1   │  │   Signal 2   │  │   Signal 3   │
+  │    Fuzzy     │  │     RAG      │  │     IPA      │
+  │   Matcher    │  │  Validator   │  │   Matcher    │
+  │              │  │              │  │              │
+  │ fuzzywuzzy   │  │ Concept →    │  │ espeak-ng →  │
+  │ string sim   │  │ ChromaDB     │  │ Levenshtein  │
+  │ vs entity    │  │ query →      │  │ on phonetic  │
+  │ store        │  │ chunk lookup │  │ strings      │
+  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘
+         │                 │                 │
+         └─────────────────┼─────────────────┘
+                           │
+                           ▼
+                ┌─────────────────────┐
+                │  MultiSignalAgent   │  LLM weighs all three
+                │  (LLM)              │  signals holistically
+                └──────────┬──────────┘
+                           │
+              ┌────────────┼────────────┐
+              ▼            ▼            ▼
+       ┌────────────┐ ┌──────────┐ ┌────────┐
+       │auto_correct│ │ ask_user │ │  skip  │
+       └─────┬──────┘ └────┬─────┘ └───┬────┘
+             │             │           │
+             │             ▼           │
+             │    ┌─────────────────┐  │
+             │    │  Streamlit UI   │  │
+             │    │  Accept/Reject  │  │
+             │    └────────┬────────┘  │
+             │             │           │
+             └─────────────┼───────────┘
+                           │
+                           ▼
+                ┌─────────────────────┐
+                │  Corrected          │
+                │  Transcript         │
+                └──────────┬──────────┘
+                           │
+                           ▼
+                ┌─────────────────────┐
+                │  MLflow Logging     │  Per-correction run:
+                │                     │  • signal scores
+                │                     │  • agent reasoning
+                │                     │  • action taken
+                │                     │  • user decision
+                │                     │  → offline evaluation
+                │                     │    & threshold tuning
+                └─────────────────────┘
+```
 
-- Mine corporate documents → extract entity names (NER)
-- Generate synthetic audio for each entity via TTS
-- Embed the audio and store it alongside entity text + optional summary
-- After a meeting transcript is produced:
+---
 
-    - re-extract transcript entities (NER)
-    - identify and embed uncertain entities
-    - retrieve top matches from the audio store
-    - decide: keep / correct / ask the user
+## Quickstart
 
+### 1. Install dependencies
 
-If user corrects: store (wrong text → correct entity) feedback to improve future auto-corrections
+```bash
+pip install -r requirements.txt
+```
 
-## Architecture Overview
+Set your OpenAI API key:
 
-```mermaid
-flowchart LR
-  T["Transcript (from corporate ASR)"] --> L1[LLM picks tokens/entities to verify]
-  L1 --> Q[TTS: speak the token]
-  Q --> E[Audio embed token]
-  E --> S["(Audio Store: canonical entity + audio embed + wrong_text list)"]
-  S --> K[Top-K matches]
-  K --> L2[LLM decides: replace / keep / ask user]
-  L2 --> O[Output: annotated transcript]
+```bash
+# .env or shell
+export OPENAI_API_KEY=sk-...
+```
 
-  L2 -->|ask user| U[User correction]
-  U --> F[Append token to wrong_text\nfor the chosen canonical entity]
-  F --> S
+For IPA phonetic matching, install `espeak-ng` inside WSL:
+
+```bash
+wsl sudo apt-get install -y espeak-ng
+```
+
+### 2. Add your documents
+
+Drop any number of Markdown files into `data/documents/`:
+
+```
+data/documents/
+    internal_glossary.md
+    project_handbook.md
+    team_runbook.md
+```
+
+### 3. Run the setup pipeline (once)
+
+```bash
+# Step 1 — chunk & enrich with LLM metadata
+python -m pipeline.chunk_documents
+
+# Step 2 — embed chunks into ChromaDB
+python -m pipeline.embed_chunks
+
+# Step 3 — build entity store
+python -m pipeline.build_entity_store
+
+# Step 4 — add IPA pronunciations (requires espeak-ng in WSL)
+python -m pipeline.add_ipa
+```
+
+All outputs land in `artifacts/` (gitignored).
+
+### 4. Launch the app
+
+```bash
+streamlit run app/app.py
 ```
