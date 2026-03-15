@@ -65,9 +65,9 @@ This project experiments with a different approach: **leave the ASR model alone 
                                          │
                                          ▼
                               ┌──────────────────────┐
-                              │ artifacts/            │
-                              │ entity_store.json     │
-                              │ (+ ipa fields)        │
+                              │ artifacts/           │
+                              │ entity_store.json    │
+                              │ (+ ipa fields)       │
                               └──────────────────────┘
 
 
